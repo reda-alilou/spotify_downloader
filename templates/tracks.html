@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Playlist Tracks</title>
+</head>
+<body>
+    <h1>Tracks in Playlist: {{ playlist_name }}</h1>
+    <form action="{{ url_for('download_tracks', playlist_id=playlist_id) }}" method="POST">
+        <ul>
+            {% for track in tracks %}
+                <li>
+                    <input type="checkbox" name="track" value="{{ track['track']['id'] }}">
+                    {{ track['track']['name'] }} by {{ track['track']['artists'][0]['name'] }}
+                </li>
+            {% endfor %}
+        </ul>
+        <button type="submit">Download Selected Tracks</button>
+        <button type="button" onclick="selectAllTracks()">Select All</button>
+    </form>
+
+    <script>
+        function selectAllTracks() {
+            document.querySelectorAll('input[name="track"]').forEach(checkbox => checkbox.checked = true);
+        }
+    </script>
+</body>
+</html>
