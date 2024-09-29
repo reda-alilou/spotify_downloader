@@ -11,7 +11,7 @@ app.secret_key = os.urandom(24)  # A random secret key for session management
 sp_oauth = SpotifyOAuth(
     client_id=os.getenv('SPOTIPY_CLIENT_ID'),
     client_secret=os.getenv('SPOTIPY_CLIENT_SECRET'),
-    redirect_uri="http://localhost:5000/callback",
+    redirect_uri=os.getenv('SPOTIPY_REDIRECT_URI'),
     scope="user-library-read playlist-read-private"
 )
 
