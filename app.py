@@ -6,7 +6,7 @@ import time
 from spotify_downloader import search_youtube, download_track
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)  # A random secret key for session management
+app.secret_key = 'Nkmk@2208'  # A random secret key for session management
 
 sp_oauth = SpotifyOAuth(
     client_id=os.getenv('SPOTIPY_CLIENT_ID'),
@@ -37,9 +37,10 @@ def login():
 def callback():
     code = request.args.get('code')
     token_info = sp_oauth.get_access_token(code)
+    print("Token Info:", token_info)  # Add this for debugging
     session['token_info'] = token_info
-    
     return redirect(url_for('index'))
+
 
 @app.route('/select_playlist/<playlist_id>')
 def select_playlist(playlist_id):
