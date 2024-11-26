@@ -20,7 +20,7 @@ A Python project that allows users to download tracks from their Spotify playlis
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-username/spotify-downloader.git
+   git clone https://github.com/reda-alilou/spotify_downloader.git
 2. **Navigate to the project directory:**
    ```bash
    cd spotify-downloader
