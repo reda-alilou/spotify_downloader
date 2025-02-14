@@ -1,2 +1,2 @@
-spotipy==2.24.0
-yt-dlp==2024.9.27
+spotipy
+yt-dlp

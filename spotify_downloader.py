@@ -1,173 +1,219 @@
+import sys
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import os
 import yt_dlp
-import time
+import logging
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QLabel, QListWidget, QPushButton, QComboBox, 
+    QProgressBar, QMessageBox, QListWidgetItem
+)
+from PyQt6.QtCore import QThread, pyqtSignal
+from concurrent.futures import ThreadPoolExecutor
 
-# 1. Authentication with Spotify API
+# Set up logging
+logging.basicConfig(filename='download_log.txt', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Spotify Authentication
 def authenticate_spotify():
-    # Set up Spotify OAuth using client credentials from environment variables
     sp_oauth = SpotifyOAuth(
         client_id=os.getenv('SPOTIPY_CLIENT_ID'),
         client_secret=os.getenv('SPOTIPY_CLIENT_SECRET'),
         redirect_uri=os.getenv('SPOTIPY_REDIRECT_URI'),
-        scope='user-library-read playlist-read-private'
+        scope='playlist-read-private'
     )
-
-    # Step 1: Generate authorization URL
-    auth_url = sp_oauth.get_authorize_url()
-    print(f'Please go to the following URL to authorize the application: {auth_url}')
-
-    # Step 2: Ask user to provide the URL they were redirected to after authorization
-    response = input('Paste the URL you were redirected to: ')
-
-    # Step 3: Extract the authorization code from the redirected URL
-    code = sp_oauth.parse_response_code(response)
-
-    # Step 4: Use the authorization code to obtain an access token
-    token_info = sp_oauth.get_access_token(code)
-
-    # Check if token is obtained successfully and return authenticated Spotify client
+    token_info = sp_oauth.get_cached_token()
     if token_info:
-        print('Access token successfully obtained!')
         return spotipy.Spotify(auth=token_info['access_token'])
     else:
-        print('Failed to obtain access token.')
-        exit()
+        QMessageBox.critical(None, "Error", "Spotify authentication failed.")
+        sys.exit()
 
-# 2. Fetch and display Spotify playlists for the current user
+# Get all playlists
 def get_user_playlists(sp):
-    playlists = sp.current_user_playlists()  # Fetch user playlists
-    all_playlists = []
+    return sp.current_user_playlists()['items']
 
-    # Loop through paginated playlist results and print playlist names
-    while playlists:
-        for idx, playlist in enumerate(playlists['items'], start=len(all_playlists) + 1):
-            print(f"{idx}. {playlist['name']} - ID: {playlist['id']}")
-            all_playlists.append(playlist)
-        
-        # Check if there are more playlists to fetch
-        if playlists['next']:
-            playlists = sp.next(playlists)
-        else:
-            playlists = None
-    
-    return all_playlists
-
-# 3. Let the user select a playlist from the displayed list
-def select_playlist(sp, playlists):
-    while True:
-        choice = input('Choose the playlist you want to select: ')
-        if choice.isdigit() and 1 <= int(choice) <= len(playlists):
-            selected_playlist = playlists[int(choice) - 1]
-            print(f"Selected Playlist: {selected_playlist['name']}")
-            return selected_playlist['id']  # Return selected playlist ID
-        else:
-            print('Please enter a valid number!')
-
-# 4. Get all tracks from a selected playlist
+# Get tracks from playlist
 def get_tracks_from_playlist(sp, playlist_id):
-    tracks = sp.playlist_tracks(playlist_id)  # Fetch tracks from selected playlist
-    all_tracks = []
+    tracks = []
+    results = sp.playlist_tracks(playlist_id)
+    
+    while results:
+        for item in results['items']:
+            track = item['track']
+            if track:
+                tracks.append((track['name'], track['artists'][0]['name'], track['album']['name'], track['duration_ms'] // 1000))
+        results = sp.next(results) if results.get('next') else None
 
-    # Loop through paginated track results and print track names and artists
-    while tracks:
-        for idx, item in enumerate(tracks['items'], start=len(all_tracks) + 1):
-            track_name = item['track']['name']
-            artist_name = item['track']['artists'][0]['name']
-            print(f"{idx}. {track_name} - Artist: {artist_name}")
-            all_tracks.append(item)
+    return tracks
 
-        # Check if there are more tracks to fetch
-        if tracks['next']:
-            tracks = sp.next(tracks)
-        else:
-            tracks = None
-
-    return all_tracks
-
-# 5. Allow the user to select specific tracks or download all
-def select_tracks(all_tracks):
-    while True:
-        choice = input("Enter numbers separated by commas (e.g., 1,2,3) or 'all' to select all: ").strip()
-        if choice.lower() == 'all':
-            return all_tracks  # Select all tracks if user enters 'all'
-        choice_list = choice.split(',')
-        valid_choices = []
-        for number in choice_list:
-            if number.isdigit() and 1 <= int(number) <= len(all_tracks):
-                valid_choices.append(int(number))
-            else:
-                print("Please enter valid numbers separated by commas or 'all'!")
-                break
-        else:
-            return [all_tracks[i - 1] for i in valid_choices]  # Return selected tracks
-
-# 6. Search for a track on YouTube
+# Search YouTube for a track
 def search_youtube(track_name, artist_name):
-    search_query = f'ytsearch5:"{track_name}" "{artist_name}"'  # Search query for YouTube
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True
-    }
+    search_query = f'ytsearch5:"{track_name} {artist_name} audio"'
+    ydl_opts = {'format': 'bestaudio/best', 'quiet': True, 'noplaylist': True}
     
-    # Use yt-dlp to search for the track on YouTube
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info_dict = ydl.extract_info(search_query, download=False)
-        if 'entries' in info_dict and info_dict['entries']:
-            for entry in info_dict['entries']:
-                video_title = entry.get('title', '').lower()
-                if track_name.lower() in video_title and artist_name.lower() in video_title:
-                    return entry['webpage_url']
+        try:
+            info_dict = ydl.extract_info(search_query, download=False)
+            if 'entries' in info_dict and info_dict['entries']:
+                return info_dict['entries'][0]['webpage_url']
+        except Exception as e:
+            logging.error(f"⚠️ Error searching YouTube for {track_name}: {e}")
+            return None
 
-        return info_dict['entries'][0]['webpage_url'] if info_dict['entries'] else None
+# Background Thread for Downloads
+class DownloadThread(QThread):
+    progress_signal = pyqtSignal(int)
 
-# 7. Download the track from YouTube as MP3
-def download_track(youtube_url, track_name, artist_name):
-    if not youtube_url:
-        print(f"Could not find a YouTube link for {track_name} by {artist_name}. Skipping download.")
-        return
+    def __init__(self, tracks):
+        super().__init__()
+        self.tracks = tracks
 
-    download_folder = "SpotifyDownloads"
-    os.makedirs(download_folder, exist_ok=True)  # Create the download folder if it doesn't exist
+    def run(self):
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            for i, track in enumerate(self.tracks):
+                youtube_url = search_youtube(track[0], track[1])
+                if youtube_url:
+                    self.download_track(youtube_url, track[0], track[1])
+                self.progress_signal.emit(int((i + 1) / len(self.tracks) * 100))
 
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': f'{download_folder}/{track_name} - {artist_name}.mp3',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'quiet': True,
-    }
+    def download_track(self, youtube_url, track_name, artist_name):
+        download_folder = "SpotifyDownloads"
+        os.makedirs(download_folder, exist_ok=True)
 
-    # Use yt-dlp to download the track
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            print(f'Downloading: {track_name} by {artist_name}...')
-            ydl.download([youtube_url])
-            print(f'Download completed: {track_name} by {artist_name}')
-    except Exception as e:
-        print(f"Error downloading {track_name} by {artist_name}: {e}")
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': f'{download_folder}/{track_name} - {artist_name}.mp3',
+            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+            'quiet': True,
+        }
 
-# Main program execution
-if __name__ == "__main__":
-    # Authenticate with Spotify
-    sp = authenticate_spotify()
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([youtube_url])
+                logging.info(f"✅ Downloaded {track_name} - {artist_name}")
+        except Exception as e:
+            logging.error(f"❌ Failed to download {track_name} - {artist_name}: {e}")
 
-    # Get user's playlists and let them select one
-    playlists = get_user_playlists(sp)
-    selected_playlist_id = select_playlist(sp, playlists)
-    
-    # Fetch and select tracks from the selected playlist
-    all_tracks = get_tracks_from_playlist(sp, selected_playlist_id)
-    selected_tracks = select_tracks(all_tracks)
+# GUI Window with Better Styling
+class SpotifyDownloaderGUI(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Spotify Playlist Downloader")
+        self.setGeometry(300, 200, 750, 600)
 
-    # Search and download the selected tracks from YouTube
-    for song in selected_tracks:
-        youtube_url = search_youtube(song['track']['name'], song['track']['artists'][0]['name'])
-        download_track(youtube_url, song['track']['name'], song['track']['artists'][0]['name'])
-        time.sleep(1)  # Add a delay between downloads
+        self.sp = authenticate_spotify()
+        self.playlists = get_user_playlists(self.sp)
+        self.track_list = []
+
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #121212;
+                color: white;
+                font-size: 14px;
+            }
+            QLabel {
+                font-size: 18px;
+                font-weight: bold;
+                margin-bottom: 10px;
+            }
+            QComboBox, QListWidget {
+                background-color: #1e1e1e;
+                border: 1px solid #2a2a2a;
+                padding: 5px;
+                color: white;
+            }
+            QPushButton {
+                background-color: #1DB954;
+                color: black;
+                font-weight: bold;
+                padding: 10px;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #1ed760;
+            }
+            QProgressBar {
+                border: 1px solid #333;
+                background: #222;
+                text-align: center;
+                height: 20px;
+            }
+            QProgressBar::chunk {
+                background-color: #1DB954;
+            }
+        """)
+
+        self.layout = QVBoxLayout()
+
+        # Title
+        self.title_label = QLabel("🎵 Spotify Playlist Downloader")
+        self.layout.addWidget(self.title_label)
+
+        # Playlist Selection
+        self.playlist_label = QLabel("Select a Playlist:")
+        self.layout.addWidget(self.playlist_label)
+
+        self.playlist_dropdown = QComboBox()
+        self.playlist_dropdown.addItems([p['name'] for p in self.playlists])
+        self.layout.addWidget(self.playlist_dropdown)
+
+        self.load_tracks_button = QPushButton("Load Tracks")
+        self.load_tracks_button.clicked.connect(self.load_tracks)
+        self.layout.addWidget(self.load_tracks_button)
+
+        # Track List
+        self.track_list_widget = QListWidget()
+        self.track_list_widget.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        self.layout.addWidget(self.track_list_widget)
+
+        # Track Count Display
+        self.track_count_label = QLabel("Total Tracks: 0")
+        self.layout.addWidget(self.track_count_label)
+
+        # Progress Bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setValue(0)
+        self.layout.addWidget(self.progress_bar)
+
+        # Buttons Layout
+        self.download_button = QPushButton("Download Selected Tracks")
+        self.download_button.clicked.connect(self.download_tracks)
+        self.layout.addWidget(self.download_button)
+
+        self.download_all_button = QPushButton("Download All Tracks")
+        self.download_all_button.clicked.connect(self.download_all_tracks)
+        self.layout.addWidget(self.download_all_button)
+
+        self.setLayout(self.layout)
+
+    def load_tracks(self):
+        self.track_list_widget.clear()
+        selected_index = self.playlist_dropdown.currentIndex()
+        playlist_id = self.playlists[selected_index]['id']
+        self.track_list = get_tracks_from_playlist(self.sp, playlist_id)
+
+        for track in self.track_list:
+            item = QListWidgetItem(f"{track[0]} - {track[1]}")
+            self.track_list_widget.addItem(item)
+
+        self.track_count_label.setText(f"Total Tracks: {len(self.track_list)}")
+
+    def download_tracks(self):
+        selected_tracks = [self.track_list[i.row()] for i in self.track_list_widget.selectedIndexes()]
+        self.start_download(selected_tracks)
+
+    def download_all_tracks(self):
+        self.start_download(self.track_list)
+
+    def start_download(self, tracks):
+        self.download_thread = DownloadThread(tracks)
+        self.download_thread.progress_signal.connect(self.progress_bar.setValue)
+        self.download_thread.start()
+        QMessageBox.information(self, "Download Started", "Downloading selected tracks...")
+
+# Run the GUI
+app = QApplication(sys.argv)
+window = SpotifyDownloaderGUI()
+window.show()
+sys.exit(app.exec())
